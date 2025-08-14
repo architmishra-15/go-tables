@@ -1,4 +1,6 @@
-package main
+// colors.go
+
+package tables
 
 import (
 	"fmt"
@@ -171,8 +173,144 @@ func BgTrueColor(r, g, b int) string {
 
 // --- Convenience Functions ---
 
-func Info(text string) string { return Sprint(text, FgBlue) }
+func Info(text string) string    { return Sprint(text, FgBlue) }
 func Success(text string) string { return Sprint(text, FgGreen, Bold) }
 func Warning(text string) string { return Sprint(text, FgYellow) }
-func Error(text string) string { return Sprint(text, FgRed, Bold) }
+func Error(text string) string   { return Sprint(text, FgRed, Bold) }
 
+// ========== ANSI HANDLING FOR TABLE LIBRARY ==========
+// These functions are needed for proper width calculation in tables
+
+// ansiState represents the state of ANSI escape sequence parsing
+type ansiState int
+
+const (
+	ansiNormal ansiState = iota
+	ansiEscape
+	ansiCSI
+)
+
+// HasANSI returns true if the string contains ANSI escape sequences
+func HasANSI(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\033' && i+1 < len(s) && s[i+1] == '[' {
+			return true
+		}
+	}
+	return false
+}
+
+// HasANSIBytes returns true if the byte slice contains ANSI escape sequences
+func HasANSIBytes(b []byte) bool {
+	for i := 0; i < len(b); i++ {
+		if b[i] == '\033' && i+1 < len(b) && b[i+1] == '[' {
+			return true
+		}
+	}
+	return false
+}
+
+// StripANSI removes all ANSI escape sequences from a string
+// This is optimized for performance with minimal allocations
+func StripANSI(s string) string {
+	if !HasANSI(s) {
+		return s // Fast path: no ANSI sequences
+	}
+
+	result := make([]byte, 0, len(s))
+	state := ansiNormal
+
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+
+		switch state {
+		case ansiNormal:
+			if b == '\033' && i+1 < len(s) && s[i+1] == '[' {
+				state = ansiCSI
+				i++ // Skip the '['
+			} else {
+				result = append(result, b)
+			}
+
+		case ansiCSI:
+			// CSI sequence ends with a letter (A-Z, a-z) or specific characters
+			if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '~' {
+				state = ansiNormal
+			}
+			// Skip all characters in CSI sequence
+		}
+	}
+
+	return string(result)
+}
+
+// StripANSIBytes removes all ANSI escape sequences from a byte slice
+// Returns a new byte slice without ANSI sequences
+func StripANSIBytes(b []byte) []byte {
+	if !HasANSIBytes(b) {
+		return b // Fast path: no ANSI sequences
+	}
+
+	result := make([]byte, 0, len(b))
+	state := ansiNormal
+
+	for i := 0; i < len(b); i++ {
+		ch := b[i]
+
+		switch state {
+		case ansiNormal:
+			if ch == '\033' && i+1 < len(b) && b[i+1] == '[' {
+				state = ansiCSI
+				i++ // Skip the '['
+			} else {
+				result = append(result, ch)
+			}
+
+		case ansiCSI:
+			// CSI sequence ends with a letter (A-Z, a-z) or specific characters
+			if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '~' {
+				state = ansiNormal
+			}
+			// Skip all characters in CSI sequence
+		}
+	}
+
+	return result
+}
+
+// MeasureWidthIgnoreANSI calculates display width ignoring ANSI escape sequences
+// This integrates with the width calculation from width.go
+func MeasureWidthIgnoreANSI(s string) int {
+	if !HasANSI(s) {
+		return StringWidth(s) // Fast path: no ANSI sequences
+	}
+	stripped := StripANSI(s)
+	return StringWidth(stripped)
+}
+
+// MeasureWidthIgnoreANSIBytes calculates display width from bytes ignoring ANSI
+func MeasureWidthIgnoreANSIBytes(b []byte) int {
+	if !HasANSIBytes(b) {
+		return StringWidthBytes(b) // Fast path: no ANSI sequences
+	}
+	stripped := StripANSIBytes(b)
+	return StringWidthBytes(stripped)
+}
+
+// MeasureWidthIgnoreANSICustom calculates width using custom width function, ignoring ANSI
+func MeasureWidthIgnoreANSICustom(s string, widthFunc WidthFunc) int {
+	if !HasANSI(s) {
+		return StringWidthCustom(s, widthFunc)
+	}
+	stripped := StripANSI(s)
+	return StringWidthCustom(stripped, widthFunc)
+}
+
+// MeasureWidthIgnoreANSIBytesCustom calculates width from bytes with custom function, ignoring ANSI
+func MeasureWidthIgnoreANSIBytesCustom(b []byte, widthFunc WidthFunc) int {
+	if !HasANSIBytes(b) {
+		return StringWidthBytesCustom(b, widthFunc)
+	}
+	stripped := StripANSIBytes(b)
+	return StringWidthBytesCustom(stripped, widthFunc)
+}
