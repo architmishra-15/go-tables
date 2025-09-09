@@ -54,10 +54,77 @@ var defaultBufPool = &sync.Pool{
 	},
 }
 
-// Prints the available table styles
+// PrintStyles displays all available table styles with visual examples
 func PrintStyles() {
-	fmt.Printf("Available table styles:\n")
-	fmt.Printf("TopLeft\nTopRight\nBottomLeft\nBottomRight\nHorizontal\nVertical\nCross\nTopTee\nBottomTee\nLeftTee\nRightTee\n")
+	fmt.Println("Available Table Styles")
+	fmt.Println("======================")
+	fmt.Println()
+
+	styles := []struct {
+		name        string
+		style       Style
+		description string
+	}{
+		{
+			name:        "StyleSingle",
+			style:       StyleSingle,
+			description: "Single line Unicode box drawing characters",
+		},
+		{
+			name:        "StyleDouble", 
+			style:       StyleDouble,
+			description: "Double line Unicode box drawing characters",
+		},
+		{
+			name:        "StyleRounded",
+			style:       StyleRounded,
+			description: "Rounded corner Unicode characters",
+		},
+		{
+			name:        "StyleASCII",
+			style:       StyleASCII,
+			description: "ASCII-only characters for maximum compatibility",
+		},
+		{
+			name:        "StyleNone",
+			style:       StyleNone,
+			description: "No borders, spacing only for clean text output",
+		},
+	}
+
+	for i, styleInfo := range styles {
+		fmt.Printf("%d. %s\n", i+1, styleInfo.name)
+		fmt.Printf("   %s\n", styleInfo.description)
+		fmt.Println()
+
+		sampleTable := NewFromStrings("Header1", "Header2", "Header3").
+			SetStyle(styleInfo.style).
+			AddRow("Row 1", "Data A", "Value X").
+			AddRow("Row 2", "Data B", "Value Y")
+
+		fmt.Print(sampleTable.String())
+		fmt.Println()
+
+		// Add separator between styles (except for the last one)
+		if i < len(styles)-1 {
+			fmt.Println("---")
+			fmt.Println()
+		}
+	}
+
+	fmt.Println("Usage Examples:")
+	fmt.Println("---------------")
+	fmt.Println()
+	fmt.Println("// Set style during table creation")
+	fmt.Println("table := NewFromStrings(\"Name\", \"Age\").SetStyle(StyleSingle)")
+	fmt.Println()
+	fmt.Println("// Change style after creation")
+	fmt.Println("table.SetStyle(StyleDouble)")
+	fmt.Println()
+	fmt.Println("// Available styles:")
+	for _, styleInfo := range styles {
+		fmt.Printf("// - %s: %s\n", styleInfo.name, styleInfo.description)
+	}
 }
 
 // New creates a new table with the given headers (accepts bytes directly)
