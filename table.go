@@ -54,6 +54,12 @@ var defaultBufPool = &sync.Pool{
 	},
 }
 
+// Prints the available table styles
+func PrintStyles() {
+	fmt.Printf("Available table styles:\n")
+	fmt.Printf("TopLeft\nTopRight\nBottomLeft\nBottomRight\nHorizontal\nVertical\nCross\nTopTee\nBottomTee\nLeftTee\nRightTee\n")
+}
+
 // New creates a new table with the given headers (accepts bytes directly)
 func New(headers ...[]byte) *Table {
 	t := &Table{
