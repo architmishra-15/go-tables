@@ -57,6 +57,9 @@ type Table struct {
 	colColors   map[int]*Color
 	cellColors  map[rowcol]*Color
 
+	footer      [][]byte
+	footerColor *Color
+
 	// Buffer pool for performance
 	bufPool *sync.Pool
 }
@@ -323,6 +326,16 @@ func (t *Table) measureColumns() []int {
 		}
 	}
 
+	if t.footer != nil {
+		for j, cell := range t.footer {
+			if j < len(widths) {
+				if w := MeasureWidthIgnoreANSIBytesCustom(cell, t.widthFunc); w > widths[j] {
+					widths[j] = w
+				}
+			}
+		}
+	}
+
 	// Apply max width constraints
 	for i, maxWidth := range t.maxWidths {
 		if maxWidth > 0 && widths[i] > maxWidth {
@@ -457,9 +470,12 @@ func (t *Table) renderRow(buf *bytes.Buffer, row [][]byte, widths []int, rowIdx 
 		aligned := string(t.alignCell(cell, width, align))
 
 		// apply color — header vs data row
-		if rowIdx == -1 {
+		switch rowIdx {
+		case -1: 
 			aligned = t.headerColor.Apply(aligned)
-		} else {
+		case -2:
+			aligned = t.footerColor.Apply(aligned)
+		default:
 			aligned = t.cellColor(rowIdx, i).Apply(aligned)
 		}
 
@@ -493,7 +509,14 @@ func (t *Table) render(buf *bytes.Buffer) {
 		dataIdx++
 	}
 
-	t.renderBorder(buf, widths, "bottom")
+	// replace the final renderBorder call at the bottom of render():
+	if t.footer != nil {
+		t.renderBorder(buf, widths, "middle")
+		t.renderRow(buf, t.footer, widths, -2) // -2 = footer sentinel
+		t.renderBorder(buf, widths, "bottom")
+	} else {
+		t.renderBorder(buf, widths, "bottom")
+	}
 }
 
 // String returns the formatted table as a string

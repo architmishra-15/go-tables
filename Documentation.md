@@ -1,316 +1,456 @@
 # Go Tables Library
 
-A high-performance Go library for creating beautiful, customizable terminal tables with Unicode support, ANSI color compatibility, and optimized rendering.
+A dependency-free, high-performance Go library for rendering terminal tables. It started as a small utility to avoid copy-pasting table-rendering logic across CLI projects, and grew into something general enough to be worth publishing. The priorities, in order, are: correctness, speed, and a small API surface. Nothing here requires a third-party dependency.
 
-## Features
-
-- 🎨 **Multiple Border Styles**: Single, double, rounded, ASCII, and borderless styles
-- 🌍 **Full Unicode Support**: Proper width calculation for CJK characters, emojis, and combining marks
-- 🎯 **Column Alignment**: Left, center, and right alignment for each column
-- 🚀 **High Performance**: Byte-first API with buffer pooling for minimal allocations
-- 🌈 **ANSI Color Support**: Full compatibility with colored text and escape sequences
-- 📝 **Flexible Input**: Support for strings, bytes, numbers, and any type
-- 📊 **Width Management**: Automatic sizing with optional maximum width constraints
-- 💾 **Multiple Output Formats**: Print to stdout, get as string, or write to any io.Writer
+---
 
 ## Installation
 
 ```bash
-go get github.com/architmishra-15/go-table
+go get github.com/architmishra-15/go-tables
 ```
+
+Requires Go 1.21 or later. No external dependencies — only the standard library.
+
+---
 
 ## Quick Start
 
 ```go
 package main
 
-import "github.com/architmishra-15/go-table"
+import tables "github.com/architmishra-15/go-tables"
 
 func main() {
-    // Simple table creation
-    table := NewFromStrings("Name", "Age", "City").
+    tables.NewFromStrings("Name", "Age", "City").
         AddRow("Alice", 25, "New York").
         AddRow("Bob", 30, "Los Angeles").
-        SetStyle(StyleRounded).
+        SetStyle(tables.StyleRounded).
         Print()
 }
 ```
 
-## API Reference
-
-### Table Creation
-
-#### `New(headers ...[]byte) *Table`
-Creates a new table with byte slice headers (most performant).
-
-```go
-table := New([]byte("Name"), []byte("Age"), []byte("City"))
+Output:
+```
+╭───────┬─────┬─────────────╮
+│ Name  │ Age │ City        │
+├───────┼─────┼─────────────┤
+│ Alice │ 25  │ New York    │
+│ Bob   │ 30  │ Los Angeles │
+╰───────┴─────┴─────────────╯
 ```
 
-#### `NewFromStrings(headers ...string) *Table`
-Creates a new table with string headers (convenience function).
+---
+
+## Table Creation
+
+There are two constructors. Use `New` when you already have `[]byte` headers and want to avoid allocations. Use `NewFromStrings` everywhere else — it's just more convenient.
 
 ```go
-table := NewFromStrings("Name", "Age", "City")
+// Byte-first, fastest path
+t := tables.New([]byte("Name"), []byte("Age"))
+
+// String convenience wrapper
+t := tables.NewFromStrings("Name", "Age")
 ```
 
-### Adding Data
+Both return `*Table` and support method chaining.
 
-#### `AddRow(values ...interface{}) *Table`
-Adds a row with mixed data types. Supports strings, numbers, booleans, and byte slices.
+---
+
+## Adding Data
+
+### `AddRow(values ...interface{}) *Table`
+
+Accepts strings, ints, int64, float64, booleans, byte slices, or anything that implements `fmt.Stringer`. Type conversion happens once during insertion, not during rendering.
 
 ```go
-table.AddRow("Alice", 25, true, []byte("data"))
+t.AddRow("Alice", 95, true, 3.14, []byte("raw"))
 ```
 
-#### `AddRowBytes(values ...[]byte) *Table`
-Adds a row from byte slices directly (highest performance).
+### `AddRowBytes(values ...[]byte) *Table`
+
+The fastest way to add rows — no type switching, no conversions, just a direct copy into the internal buffer.
 
 ```go
-table.AddRowBytes([]byte("Alice"), []byte("25"), []byte("Active"))
+t.AddRowBytes([]byte("Alice"), []byte("95"))
 ```
 
-### Styling
+### `AddSeparator() *Table`
 
-#### `SetStyle(style Style) *Table`
-Sets the border style for the table.
-
-Available styles:
-- `StyleSingle` - Single line borders (┌─┐│└┘)
-- `StyleDouble` - Double line borders (╔═╗║╚╝)
-- `StyleRounded` - Rounded corners (╭─╮│╰╯)
-- `StyleASCII` - ASCII-only borders (+|-+)
-- `StyleNone` - No borders, spacing only
+Inserts a horizontal border line at the current position in the table. Useful for grouping rows visually. You can add as many as you want and they compose correctly with all border styles.
 
 ```go
-table.SetStyle(StyleDouble)
+t.AddRow("Alice", 95).
+ AddRow("Bob",   87).
+ AddSeparator().
+ AddRow("Total", 182)
 ```
 
-#### `SetAlign(col int, align Align) *Table`
-Sets alignment for a specific column.
-
-Available alignments:
-- `AlignLeft` - Left-aligned text
-- `AlignCenter` - Center-aligned text
-- `AlignRight` - Right-aligned text
-
-```go
-table.SetAlign(0, AlignLeft).
-      SetAlign(1, AlignCenter).
-      SetAlign(2, AlignRight)
+```
+╭───────┬───────╮
+│ Name  │ Score │
+├───────┼───────┤
+│ Alice │ 95    │
+│ Bob   │ 87    │
+├───────┼───────┤
+│ Total │ 182   │
+╰───────┴───────╯
 ```
 
-#### `SetMaxWidth(col int, width int) *Table`
-Sets maximum width for a specific column (0 = unlimited).
+Note: separator rows are stripped when you call `SortByColumn` because their positions become meaningless after reordering. Add them again after sorting if you need them.
+
+---
+
+## Border Styles
+
+Five styles are available out of the box:
+
+| Constant | Description |
+| --- | --- |
+| `StyleSingle` | Single-line Unicode box drawing (`┌─┬┐│├┼┤└┴┘`) |
+| `StyleDouble` | Double-line Unicode box drawing (`╔═╦╗║╠╬╣╚╩╝`) |
+| `StyleRounded` | Rounded corners (`╭─╮│╰╯`) |
+| `StyleASCII` | Plain ASCII (`+-|`) — safe on any terminal or log file |
+| `StyleNone` | No borders, just spacing — good for copying into documents |
 
 ```go
-table.SetMaxWidth(0, 20) // Limit first column to 20 characters
+t.SetStyle(tables.StyleDouble)
 ```
 
-### Advanced Configuration
-
-#### `SetWidthFunc(fn WidthFunc) *Table`
-Sets a custom width calculation function for special character handling.
+You can also define your own style by filling in a `Style` struct directly:
 
 ```go
-customWidthFunc := func(r rune) int {
-    // Custom width logic
-    return 1
+custom := tables.Style{
+    TopLeft: '╔', TopRight: '╗',
+    // ... fill in all 11 fields
 }
-table.SetWidthFunc(customWidthFunc)
+t.SetStyle(custom)
 ```
 
-### Output Methods
+Use `PrintStyles()` to render a live preview of all built-in styles to stdout.
 
-#### `String() string`
-Returns the formatted table as a string.
+---
+
+## Column Options
+
+### Alignment
 
 ```go
-tableString := table.String()
-fmt.Print(tableString)
+t.SetAlign(0, tables.AlignLeft)    // default
+t.SetAlign(1, tables.AlignCenter)
+t.SetAlign(2, tables.AlignRight)
 ```
 
-#### `Print()`
-Prints the table directly to stdout.
+Alignment is respected in terminal output, Markdown export, and HTML export.
+
+### Max Width
 
 ```go
-table.Print()
+t.SetMaxWidth(0, 20) // truncates column 0 to 20 display characters
 ```
 
-#### `WriteTo(w io.Writer) (int64, error)`
-Writes the table to any io.Writer interface.
+Long values are truncated with an ellipsis (`...`). Set to `0` for unlimited (the default).
+
+### Custom Width Function
+
+By default, width is calculated using a compact embedded Unicode range table covering CJK, Hangul, Hiragana, Katakana, and common emoji. If you need a different heuristic, you can swap it out:
 
 ```go
-file, _ := os.Create("output.txt")
-bytesWritten, err := table.WriteTo(file)
+t.SetWidthFunc(func(r rune) int {
+    // your logic here
+    return 1
+})
 ```
 
-## Color Support
+---
 
-The library includes built-in ANSI color support:
+## Coloring
 
-### Color Functions
+The library has two layers of color: convenience functions for wrapping individual strings, and structural color that gets applied automatically during rendering.
+
+### Convenience Functions
+
+These wrap a string with ANSI codes and return it. They work in any context, not just tables.
+
 ```go
-Info("text")        // Blue text
-Success("text")     // Green bold text  
-Warning("text")     // Yellow text
-Error("text")       // Red bold text
-Sprint("text", Bold, FgRed) // Custom styling
+tables.Info("text")     // blue
+tables.Success("text")  // green + bold
+tables.Warning("text")  // yellow
+tables.Error("text")    // red + bold
+tables.Sprint("text", tables.Bold, tables.FgCyan) // custom
+```
+
+You can pass the result directly into `AddRow`:
+
+```go
+t.AddRow(tables.Success("ONLINE"), "API", "99.9%")
 ```
 
 ### Color Constants
+
 ```go
-// Foreground colors
+// Foreground
 FgBlack, FgRed, FgGreen, FgYellow, FgBlue, FgMagenta, FgCyan, FgWhite
 
-// Background colors  
+// Background
 BgBlack, BgRed, BgGreen, BgYellow, BgBlue, BgMagenta, BgCyan, BgWhite
 
 // Text styles
-Bold, Dim, Underline, Reverse, Strike
+Bold, Dim, Underline, Blink, Reverse, Hidden, Strike
 
-// Advanced colors
-Color256(42)           // 256-color palette
-TrueColor(255, 128, 0) // 24-bit RGB color
+// Extended palettes
+tables.Color256(214)           // 256-color foreground
+tables.BgColor256(214)         // 256-color background
+tables.TrueColor(255, 128, 0)  // 24-bit RGB foreground
+tables.BgTrueColor(255, 128, 0) // 24-bit RGB background
 ```
 
-### Colored Table Example
+To build a reusable color style:
+
 ```go
-table := NewFromStrings("Status", "Service", "Uptime").
-    AddRow(Success("ONLINE"), "API", "99.9%").
-    AddRow(Warning("DEGRADED"), "Cache", "87.2%").
-    AddRow(Error("OFFLINE"), "DB", "0.0%").
+highlight := tables.NewColor().
+    WithFg(tables.FgCyan).
+    WithBg(tables.BgBlack).
+    WithStyle(tables.Bold)
+
+// then apply it to any string:
+formatted := highlight.Apply("some text")
+```
+
+Set `tables.DisableColors = true` to strip all ANSI output globally — useful when piping to a file or a log aggregator.
+
+### Structural Coloring
+
+Instead of colorizing individual cells manually, you can attach color to entire rows, columns, or individual cells. These are applied automatically during rendering.
+
+#### Header Color
+
+```go
+t.SetHeaderColor(tables.NewColor().WithFg(tables.FgCyan).WithStyle(tables.Bold))
+```
+
+#### Footer Color
+
+```go
+t.SetFooterColor(tables.NewColor().WithStyle(tables.Bold))
+```
+
+#### Row, Column, and Cell Color
+
+```go
+// Color an entire data row (0-indexed)
+t.SetRowColor(2, tables.NewColor().WithFg(tables.FgRed))
+
+// Color an entire column
+t.SetColumnColor(1, tables.NewColor().WithFg(tables.FgYellow))
+
+// Color a single cell — takes priority over row and column colors
+t.SetCellColor(0, 1, tables.NewColor().WithFg(tables.FgGreen).WithStyle(tables.Bold))
+```
+
+Priority when multiple colors apply to the same cell: **cell > row > column**. The most specific one wins.
+
+```go
+tables.NewFromStrings("Name", "Score", "Grade").
+    SetStyle(tables.StyleDouble).
+    SetHeaderColor(tables.NewColor().WithStyle(tables.Bold, tables.Underline)).
+    SetColumnColor(1, tables.NewColor().WithFg(tables.FgYellow)).
+    SetRowColor(2, tables.NewColor().WithFg(tables.FgRed).WithStyle(tables.Dim)).
+    SetCellColor(0, 1, tables.NewColor().WithFg(tables.FgGreen).WithStyle(tables.Bold)).
+    AddRow("Alice", 99, "A+").   // cell (0,1) → green bold, beats column yellow
+    AddRow("Bob",   87, "B").    // cell (1,1) → column yellow
+    AddRow("Charlie", 45, "F").  // entire row 2 → red dim, beats column yellow
     Print()
 ```
+
+---
+
+## Footer
+
+A footer row is rendered after all data rows, separated from them by a border line. It's intended for totals, averages, or any kind of summary.
+
+```go
+t.SetFooter("Total", 9, "$51.99")
+t.SetFooterColor(tables.NewColor().WithStyle(tables.Bold))
+
+// Remove the footer
+t.ClearFooter()
+```
+
+Footer cells participate in column width measurement, so a wide footer value will expand the column correctly. The footer is never affected by `SortByColumn` — it always stays pinned at the bottom.
+
+---
+
+## Sorting
+
+`SortByColumn` sorts data rows by the values in a given column. The sort is stable, so rows with equal values preserve their original relative order.
+
+```go
+t.SortByColumn(1, false) // column 1, descending
+t.SortByColumn(0, true)  // column 0, ascending
+```
+
+The library detects automatically whether the column contains numeric data. If every non-empty value in the column parses as a `float64`, numeric comparison is used so that `"10"` sorts after `"9"`. Otherwise, it falls back to lexicographic comparison.
+
+Separator rows are removed during sorting (their positions would be meaningless after reordering). If you need them, add them again after the sort call.
+
+---
+
+## Exporting
+
+All three export formats strip ANSI escape sequences from cell content — color codes are a terminal concept and would corrupt a CSV file or break HTML rendering.
+
+### CSV
+
+```go
+csv := t.ToCSV()
+```
+
+Follows RFC 4180: fields containing commas, double-quotes, or newlines are wrapped in double-quotes, and any inner double-quotes are escaped by doubling them. Separator rows are skipped. The footer row, if set, is appended as the last line.
+
+### Markdown
+
+```go
+md := t.ToMarkdown()
+```
+
+Outputs a GitHub Flavored Markdown pipe table. Column alignment is expressed with the standard colon syntax in the separator row (`:---:` for center, `---:` for right). Separator rows added via `AddSeparator` are dropped since GFM has no equivalent concept. The footer, if set, is appended as a plain data row — GFM has no `<tfoot>`.
+
+The output is padded to be readable as plain text, not just spec-valid. Each column is wide enough to accommodate its widest value without truncation (unless `SetMaxWidth` constrains it).
+
+### HTML
+
+```go
+html := t.ToHTML()
+```
+
+Returns a `<table>` fragment — no `<html>`, `<head>`, or `<body>` wrapper, just the block you'd paste into an existing page. Structure:
+
+- Headers go in `<thead>` with `<th>` elements
+- The footer, if set, goes in `<tfoot>` (placed before `<tbody>` in source order, which is correct per the HTML spec and lets browsers render a sticky footer on long tables)
+- Data rows go in `<tbody>` with `<td>` elements
+- Separator rows become `<tr class="separator">` — style them however you want with CSS:
+
+```css
+tr.separator td { border-top: 2px solid #e0e0e0; padding: 0; height: 0; }
+```
+
+Alignment is expressed as an inline `style="text-align:..."` attribute on each cell. Footer cells are wrapped in `<strong>` by default.
+
+---
+
+## Output Methods
+
+```go
+t.Print()               // writes to stdout
+s := t.String()         // returns as string
+t.WriteTo(w io.Writer)  // writes to any io.Writer (file, buffer, HTTP response, etc.)
+```
+
+`WriteTo` implements `io.WriterTo`, so it works directly with `bufio.Writer`, `http.ResponseWriter`, `os.File`, and anything else that satisfies the interface.
+
+---
 
 ## Unicode Support
 
-The library properly handles:
-- **CJK Characters**: Chinese, Japanese, Korean text with correct 2-character width
-- **Emojis**: Full emoji support with proper width calculation
-- **Combining Characters**: Diacritical marks and zero-width characters
-- **RTL Text**: Arabic and Hebrew text support
+Width calculation uses a compact, embedded range table — no external dependencies. The following are handled correctly:
 
-### Unicode Example
+- **CJK Unified Ideographs** — Chinese, Japanese, Korean characters render as width 2
+- **Hangul, Hiragana, Katakana** — all width 2
+- **Emoji** — common emoji ranges (U+1F300–U+1FAFF) treated as width 2
+- **Combining characters** — diacritical marks and zero-width joiners are width 0
+- **Full-width ASCII variants** — width 2
+
+The heuristic covers the vast majority of real-world cases. Edge cases like complex emoji sequences (multi-codepoint ZWJ sequences) may not be measured perfectly — this is a documented limitation of going dependency-free. If you need perfect accuracy for an unusual script, swap in your own function with `SetWidthFunc`.
+
 ```go
-table := NewFromStrings("Language", "Greeting", "Flag").
-    AddRow("English", "Hello World", "🇺🇸").
+tables.NewFromStrings("Language", "Greeting", "Flag").
+    SetStyle(tables.StyleRounded).
     AddRow("Japanese", "こんにちは世界", "🗾").
-    AddRow("Chinese", "你好世界", "🇨🇳").
-    AddRow("Arabic", "مرحبا بالعالم", "🇸🇦").
+    AddRow("Chinese",  "你好世界",       "🇨🇳").
+    AddRow("Korean",   "안녕하세요",     "🇰🇷").
     Print()
 ```
 
-## Performance Optimizations
+---
 
-### Byte-First Approach
-For maximum performance, use byte slices directly:
+## Performance
 
-```go
-// Fastest - no string conversions
-table := New([]byte("Name"), []byte("Age")).
-    AddRowBytes([]byte("Alice"), []byte("25"))
+The library is built around a byte-first internal representation. Strings passed to `AddRow` are converted to `[]byte` once during insertion and never converted back until output. `AddRowBytes` skips even that conversion.
 
-// Good - minimal conversions  
-table := NewFromStrings("Name", "Age").
-    AddRow("Alice", 25)
-```
+Rendering uses `sync.Pool` to reuse `bytes.Buffer` instances across calls, which keeps GC pressure low in tight loops or repeated renders. The buffer is sized to avoid reallocations for typical tables.
 
-### Buffer Pooling
-The library uses sync.Pool for buffer reuse, minimizing garbage collection pressure during table rendering.
-
-### ANSI Sequence Handling
-Width calculations intelligently strip ANSI escape sequences for accurate column sizing while preserving color formatting.
-
-## Width Calculation Functions
-
-### String Width Functions
-```go
-StringWidth(s string) int                    // Basic width calculation
-StringWidthANSI(s string) int               // ANSI-aware width calculation  
-StringWidthCustom(s string, WidthFunc) int  // Custom width function
-```
-
-### Byte Width Functions  
-```go
-StringWidthBytes(b []byte) int                    // Byte slice width
-StringWidthBytesANSI(b []byte) int               // ANSI-aware byte width
-StringWidthBytesCustom(b []byte, WidthFunc) int  // Custom byte width
-```
-
-### Character Classification
-```go
-RuneWidth(r rune) int      // Returns 0, 1, or 2 for character width
-IsWideRune(r rune) bool    // True for double-width characters
-IsZeroWidthRune(r rune) bool // True for combining/zero-width characters
-```
-
-### Text Manipulation
-```go
-TruncateToWidth(s string, maxWidth int) string     // Truncate with ellipsis
-TruncateToWidthBytes(b []byte, maxWidth int) []byte // Byte version
-PadToWidth(s string, width int, align Align) string // Pad to specific width
-```
-
-## ANSI Sequence Utilities
+For high-throughput scenarios:
 
 ```go
-StripANSI(s string) string          // Remove all ANSI escape sequences
-StripANSIBytes(b []byte) []byte     // Byte version
-HasANSI(s string) bool              // Check if string contains ANSI sequences
+// fastest possible path
+t := tables.New([]byte("ID"), []byte("Value"))
+for _, item := range items {
+    t.AddRowBytes(item.IDBytes, item.ValueBytes)
+}
+t.WriteTo(w)
 ```
 
-## Error Handling
+---
 
-The library is designed to be robust:
-- Invalid UTF-8 sequences are handled gracefully
-- Missing columns are filled with empty values
-- Out-of-range column operations are ignored silently
-- All functions prioritize continuing execution over panicking
+## Width Utility Functions
 
-## Examples
+These are exported because they're useful outside of table rendering too — measuring terminal output width, padding strings for aligned output, etc.
 
-### Basic Table
 ```go
-NewFromStrings("Name", "Score").
-    AddRow("Alice", 95).
-    AddRow("Bob", 87).
-    SetStyle(StyleSingle).
-    Print()
+// Display width of a string (no ANSI handling)
+tables.StringWidth(s string) int
+
+// Display width, ignoring ANSI escape sequences
+tables.StringWidthANSI(s string) int
+
+// Same, but operating on []byte directly
+tables.StringWidthBytes(b []byte) int
+tables.StringWidthBytesANSI(b []byte) int
+
+// Width of a single rune: 0, 1, or 2
+tables.RuneWidth(r rune) int
+tables.IsWideRune(r rune) bool
+tables.IsZeroWidthRune(r rune) bool
+
+// Truncate to a display width, adding ellipsis if truncated
+tables.TruncateToWidth(s string, maxWidth int) string
+tables.TruncateToWidthBytes(b []byte, maxWidth int) []byte
+
+// Pad to a display width with alignment
+tables.PadToWidth(s string, width int, align tables.Align) string
+tables.PadToWidthBytes(b []byte, width int, align tables.Align) []byte
+
+// ANSI utilities
+tables.StripANSI(s string) string
+tables.StripANSIBytes(b []byte) []byte
+tables.HasANSI(s string) bool
+tables.HasANSIBytes(b []byte) bool
 ```
 
-### Advanced Styling
-```go
-NewFromStrings("Server", "Status", "Load").
-    SetStyle(StyleRounded).
-    SetAlign(1, AlignCenter).
-    SetAlign(2, AlignRight).
-    SetMaxWidth(0, 15).
-    AddRow("web-01", Success("OK"), "23%").
-    AddRow("db-primary", Warning("HIGH"), "89%").
-    Print()
-```
+---
 
-### File Output
-```go
-table := NewFromStrings("Item", "Price").
-    AddRow("Laptop", "$999").
-    AddRow("Mouse", "$25")
+## Architectural Notes
 
-file, _ := os.Create("report.txt")
-defer file.Close()
-table.WriteTo(file)
-```
+A few decisions that aren't obvious from the API:
 
-## Best Practices
+**Byte-first internals.** All cell data is stored as `[][]byte` internally. This avoids repeated string ↔ `[]byte` round-trips during rendering and makes ANSI stripping cheap (byte scanning rather than rune decoding).
 
-1. **Use byte slices** for high-performance scenarios
-2. **Set column alignments** for better visual presentation  
-3. **Apply max widths** to prevent overly wide tables
-4. **Use appropriate styles** for your terminal environment
-5. **Leverage color functions** for status indicators and emphasis
-6. **Consider ANSI compatibility** when outputting to files or pipes
+**`rowKind` sentinel.** Rather than storing separator rows as a special cell value or a separate list of indices, each row has a parallel `rowKind` tag (`rowData` or `rowSeparator`). This keeps the rows and their metadata in sync automatically when rows are appended or reordered, without needing to update a separate index.
+
+**Sparse maps for structural colors.** `rowColors`, `colColors`, and `cellColors` are `nil` until first use, and keyed by index rather than stored as full-length slices. Most tables only color a handful of rows or columns — allocating a full-length slice for every table regardless of whether coloring is used would waste memory for the common case.
+
+**`rowcol` struct as map key.** The per-cell color map uses `map[rowcol]*Color` where `rowcol` is a plain `struct{ row, col int }`. Go can hash fixed-size structs without boxing them, so lookups are allocation-free.
+
+**Footer is not a row.** The footer is stored separately from `t.rows` and rendered after the main loop. This means `SortByColumn` cannot accidentally reorder it, and it doesn't interfere with row index calculations used by `SetRowColor` and `SetCellColor`.
+
+**Export strips ANSI.** All three export formats (`ToCSV`, `ToMarkdown`, `ToHTML`) call `StripANSI` on every cell. You can freely pass colored strings into `AddRow` and export the same table to both terminal and file formats without having to maintain two versions of the data.
+
+**`render` is the single source of truth.** Both `String()` and `WriteTo()` delegate to a private `render(buf *bytes.Buffer)` method. This means the rendering logic only exists in one place, and the two output methods are just thin wrappers that handle buffer pool lifecycle.
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+AGPL-3.0 — see the [LICENSE](./LICENSE) file for details.
