@@ -1,5 +1,4 @@
 // table.go
-
 package tables
 
 import (
@@ -10,13 +9,21 @@ import (
 	"sync"
 )
 
-// Alignment constants
-type Align int
+// Constants
+type Align   int
+
+// rowKind distinguishes between normal data rows and separator rows.
+type rowKind int	// empty structs (struct{}) could also be used here, but since it'll be later used as a slice, it'd still end up taking atleast a byte.
 
 const (
 	AlignLeft Align = iota
 	AlignCenter
 	AlignRight
+)
+
+const (
+	rowData rowKind = iota
+	rowSeparator
 )
 
 // Style represents border characters for table rendering
@@ -38,10 +45,17 @@ type Style struct {
 type Table struct {
 	headers   [][]byte   // Column headers as bytes
 	rows      [][][]byte // Each row contains multiple cells, each cell is []byte
+	rowKinds  []rowKind	 // Parallel to rows — rowData or rowSeparator
 	style     Style
 	aligns    []Align   // Alignment per column
 	maxWidths []int     // Max width per column (0 = unlimited)
 	widthFunc WidthFunc // Pluggable width calculation function
+
+	// Styling
+	headerColor *Color
+	rowColors   map[int]*Color
+	colColors   map[int]*Color
+	cellColors  map[rowcol]*Color
 
 	// Buffer pool for performance
 	bufPool *sync.Pool
@@ -49,7 +63,7 @@ type Table struct {
 
 // Buffer pool for reusing byte buffers
 var defaultBufPool = &sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &bytes.Buffer{}
 	},
 }
@@ -132,6 +146,7 @@ func New(headers ...[]byte) *Table {
 	t := &Table{
 		headers:   make([][]byte, len(headers)),
 		rows:      make([][][]byte, 0),
+		rowKinds:  make([]rowKind, 0),
 		style:     StyleSingle, // Default to single line style
 		aligns:    make([]Align, len(headers)),
 		maxWidths: make([]int, len(headers)),
@@ -158,7 +173,7 @@ func NewFromStrings(headers ...string) *Table {
 }
 
 // AddRow adds a row to the table, preferring byte inputs for performance
-func (t *Table) AddRow(values ...interface{}) *Table {
+func (t *Table) AddRow(values ...any) *Table {
 	if len(values) == 0 {
 		return t
 	}
@@ -188,7 +203,7 @@ func (t *Table) AddRow(values ...interface{}) *Table {
 			row[i] = strconv.AppendBool(nil, v)
 		default:
 			// Fallback to string conversion (avoid this path for performance)
-			row[i] = []byte(fmt.Sprintf("%v", v))
+			row[i] = fmt.Appendf(nil, "%v", v)
 		}
 	}
 
@@ -198,6 +213,7 @@ func (t *Table) AddRow(values ...interface{}) *Table {
 	}
 
 	t.rows = append(t.rows, row)
+	t.rowKinds = append(t.rowKinds, rowData)
 	return t
 }
 
@@ -224,6 +240,27 @@ func (t *Table) AddRowBytes(values ...[]byte) *Table {
 	}
 
 	t.rows = append(t.rows, row)
+	t.rowKinds = append(t.rowKinds, rowData)
+	return t
+}
+
+// AddSeparator inserts a horizontal separator line at the current position in
+// the table. The separator is rendered using the table's active border style,
+// identical to the header/body divider. Multiple separators can be added to
+// create logical groups of rows.
+//
+// Example:
+//
+//	t := NewFromStrings("Name", "Score").
+//	    AddRow("Alice", 95).
+//	    AddRow("Bob",   87).
+//	    AddSeparator().
+//	    AddRow("Total", 182)
+func (t *Table) AddSeparator() *Table {
+	// The actual cell content doesn't matter for separators; use a nil row so
+	// the renderer can identify it quickly without allocating a full cell slice.
+	t.rows = append(t.rows, nil)
+	t.rowKinds = append(t.rowKinds, rowSeparator)
 	return t
 }
 
@@ -269,13 +306,19 @@ func (t *Table) measureColumns() []int {
 	}
 
 	// Measure row widths
-	for _, row := range t.rows {
+	for i, row := range t.rows {
+
+		if t.rowKinds[i] == rowSeparator {
+			continue // separators don't affect column widths
+		}
+
 		for i, cell := range row {
 			if i < len(widths) {
 				cellWidth := MeasureWidthIgnoreANSIBytesCustom(cell, t.widthFunc)
-				if cellWidth > widths[i] {
-					widths[i] = cellWidth
-				}
+				// if cellWidth > widths[i] {
+				// 	widths[i] = cellWidth
+				// }
+				widths[i] = max(widths[i], cellWidth)
 			}
 		}
 	}
@@ -335,7 +378,7 @@ func (t *Table) padWithANSI(cell []byte, targetWidth, currentWidth int, align Al
 		result := make([]byte, len(cell)+padding)
 
 		// Left padding
-		for i := 0; i < leftPad; i++ {
+		for i := range leftPad {
 			result[i] = ' '
 		}
 
@@ -343,7 +386,7 @@ func (t *Table) padWithANSI(cell []byte, targetWidth, currentWidth int, align Al
 		copy(result[leftPad:], cell)
 
 		// Right padding
-		for i := 0; i < rightPad; i++ {
+		for i := range rightPad {
 			result[leftPad+len(cell)+i] = ' '
 		}
 
@@ -353,7 +396,7 @@ func (t *Table) padWithANSI(cell []byte, targetWidth, currentWidth int, align Al
 		result := make([]byte, len(cell)+padding)
 
 		// Left padding
-		for i := 0; i < padding; i++ {
+		for i := range padding {
 			result[i] = ' '
 		}
 
@@ -368,7 +411,7 @@ func (t *Table) padWithANSI(cell []byte, targetWidth, currentWidth int, align Al
 		copy(result, cell)
 
 		// Right padding
-		for i := 0; i < padding; i++ {
+		for i := range padding {
 			result[len(cell)+i] = ' '
 		}
 
@@ -388,7 +431,7 @@ func (t *Table) renderBorder(buf *bytes.Buffer, widths []int, borderType string)
 }
 
 // renderRow renders a single data row using the table's style
-func (t *Table) renderRow(buf *bytes.Buffer, row [][]byte, widths []int) {
+func (t *Table) renderRow(buf *bytes.Buffer, row [][]byte, widths []int, rowIdx int) {
 	if len(widths) == 0 {
 		return
 	}
@@ -411,14 +454,46 @@ func (t *Table) renderRow(buf *bytes.Buffer, row [][]byte, widths []int) {
 			align = t.aligns[i]
 		}
 
-		alignedCell := t.alignCell(cell, width, align)
-		buf.Write(alignedCell)
+		aligned := string(t.alignCell(cell, width, align))
 
+		// apply color — header vs data row
+		if rowIdx == -1 {
+			aligned = t.headerColor.Apply(aligned)
+		} else {
+			aligned = t.cellColor(rowIdx, i).Apply(aligned)
+		}
+
+		buf.WriteString(aligned)
 		buf.WriteByte(' ')          // Right padding
 		buf.WriteRune(verticalChar) // Column separator / Right border
 	}
 
 	buf.WriteByte('\n')
+}
+
+// render writes the complete table into buf.
+func (t *Table) render(buf *bytes.Buffer) {
+	if len(t.headers) == 0 {
+		return
+	}
+
+	widths := t.measureColumns()
+
+	t.renderBorder(buf, widths, "top")
+	t.renderRow(buf, t.headers, widths, -1)      // -1 = header
+	t.renderBorder(buf, widths, "middle")
+
+	dataIdx := 0
+	for i, row := range t.rows {
+		if t.rowKinds[i] == rowSeparator {
+			t.renderBorder(buf, widths, "middle")
+			continue
+		}
+		t.renderRow(buf, row, widths, dataIdx)
+		dataIdx++
+	}
+
+	t.renderBorder(buf, widths, "bottom")
 }
 
 // String returns the formatted table as a string
@@ -432,18 +507,7 @@ func (t *Table) String() string {
 	buf.Reset()
 	defer t.bufPool.Put(buf)
 
-	widths := t.measureColumns()
-
-	// Render table
-	t.renderBorder(buf, widths, "top")
-	t.renderRow(buf, t.headers, widths)
-	t.renderBorder(buf, widths, "middle")
-
-	for _, row := range t.rows {
-		t.renderRow(buf, row, widths)
-	}
-
-	t.renderBorder(buf, widths, "bottom")
+	t.render(buf)
 
 	// Create a copy of the buffer content to return
 	result := make([]byte, buf.Len())
@@ -467,20 +531,7 @@ func (t *Table) WriteTo(w io.Writer) (int64, error) {
 	buf.Reset()
 	defer t.bufPool.Put(buf)
 
-	widths := t.measureColumns()
-
-	// Render table
-	t.renderBorder(buf, widths, "top")
-	t.renderRow(buf, t.headers, widths)
-	t.renderBorder(buf, widths, "middle")
-
-	for _, row := range t.rows {
-		t.renderRow(buf, row, widths)
-	}
-
-	t.renderBorder(buf, widths, "bottom")
-
+	t.render(buf)
 	// Write directly from buffer to avoid string conversion
-	written, err := buf.WriteTo(w)
-	return written, err
+	return buf.WriteTo(w)
 }
